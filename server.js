@@ -1,131 +1,80 @@
-// server.js - Unified Multi-Agent Server
+// server.js - The Digital Sovereign v1
 import express from "express";
+import dotenv from "dotenv";
+import axios from "axios";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import bodyParser from "body-parser";
-import dotenv from "dotenv";
-import axios from "axios";
 import FormData from "form-data";
 import { LRUCache } from "lru-cache";
 
 dotenv.config();
 const app = express();
-
-// --- helpers & config ---------------------------------------------------
-const {
-  PORT = 8080,
-  SITE_BASE_URL,
-  PAYSTACK_SECRET_KEY,
-  PAYSTACK_WEBHOOK_SECRET,
-  FLW_SECRET_KEY,
-  FLW_WEBHOOK_SECRET,
-  FLW_COUNTRY = "ZA",
-  AIRTABLE_API_KEY,
-  AIRTABLE_BASE_ID,
-  AIRTABLE_TABLE,
-  DOWNLOAD_BASE_URL,
-  WHATSAPP_CHANNEL_LINK,
-  // Agent Credentials
-  WHATSAPP_TOKEN,
-  WHATSAPP_PHONE_ID,
-  MPESA_SHORTCODE,
-  MPESA_PASSKEY,
-  STABILITY_API_KEY,
-  ELEVENLABS_API_KEY,
-  HEYGEN_API_KEY,
-} = process.env;
-
-const conversationState = new LRUCache({ max: 1000, ttl: 1000 * 60 * 60 });
-
-const AT_BASE = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE)}`;
-
-async function airtableUpsert(external_id, fields) {
-  const q = new URLSearchParams({ filterByFormula: `{external_id}='${external_id}'`, maxRecords: "1" });
-  const found = await fetch(`${AT_BASE}?${q}`, { headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` } }).then(r=>r.json());
-  if (found?.records?.length) return found.records[0];
-  const res = await fetch(AT_BASE, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ records: [{ fields: { external_id, ...fields } }] })
-  }).then(r=>r.json());
-  return res.records?.[0];
-}
-
-function deliverableURL(product_id) {
-  const file = product_id === "PDF_R99" ? "explainer.pdf" :
-               product_id === "BRIEF_R299" ? "briefing-pack.pdf" :
-               "download.pdf";
-  return `${DOWNLOAD_BASE_URL}/${file}`;
-}
-
-async function sendWhatsAppMessage(to, text) {
-  const url = `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`;
-  const body = {
-    messaging_product: "whatsapp",
-    to: to,
-    type: "text",
-    text: { preview_url: false, body: text },
-  };
-  await fetch(url, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
 app.use(express.json());
 const rawParser = bodyParser.raw({ type: "*/*" });
 
-// === AGENT ENDPOINTS =======================================================
-app.post("/api/agents/datahunter/whatsapp", async (req, res) => {
-  try {
-    const from = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from;
-    const text = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body;
-    if (!from || !text) return res.sendStatus(200);
+const {
+  PORT = 8080,
+  GEMINI_API_KEY,
+  NEWS_API_KEY,
+  // ... all your other API keys and variables
+} = process.env;
 
-    let state = conversationState.get(from) || { stage: 0, answers: {} };
-    let reply = "";
-    switch (state.stage) {
-      case 0:
-        reply = "Hi! Quick 3 questions:\n1) What do you need?"; state.stage = 1; break;
-      case 1:
-        state.answers.need = text; reply = "2) What is your budget?"; state.stage = 2; break;
-      case 2:
-        state.answers.budget = text; reply = "3) Where are you located?"; state.stage = 3; break;
-      case 3:
-        state.answers.location = text; reply = "Thanks! Want to try M-Pesa test checkout? Reply YES."; state.stage = 4; break;
-      case 4:
-        if (text.trim().toLowerCase() === "yes") {
-          reply = "Great! Check your phone for an M-Pesa prompt.";
-          console.log(`Triggering M-Pesa for ${from} with answers:`, state.answers);
-        } else { reply = "No problem. Let me know if you need anything else!"; }
-        state.stage = 0; break;
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const conversationState = new LRUCache({ max: 1000, ttl: 1000 * 60 * 60 });
+
+
+// --- AGENT 1: The Market Weaver -----------------------------------------
+async function getRadioSignal() {
+  console.log("Monitoring Lesedi FM for signals (SIMULATED)...");
+  // This is our simulated transcript. We can change this anytime to test different scenarios.
+  const liveTranscript = "Breaking News from the JSE: Tech giant Naspers has just announced a surprise R5 billion investment into a new AI farming initiative based in Stellenbosch.";
+  
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"});
+  const prompt = `You are an intelligence analyst codenamed 'Echo Hunter'. Analyze the following live radio transcript from South Africa and extract the single most valuable financial signal. Transcript: "${liveTranscript}"`;
+  
+  const result = await model.generateContent(prompt);
+  const signal = result.response.text();
+  console.log("RADIO SIGNAL DETECTED:", signal);
+  return signal;
+}
+
+app.post("/api/agents/market-weaver/generate-mandate", async (req, res) => {
+  try {
+    const { competitorDomain } = req.body;
+    if (!competitorDomain) {
+      return res.status(400).json({ error: "competitorDomain is required." });
     }
-    conversationState.set(from, state);
-    await sendWhatsAppMessage(from, reply);
-    res.sendStatus(200);
-  } catch (e) { console.error("WhatsApp Agent Error:", e.message); res.sendStatus(500); }
+    console.log(`Market Weaver activated. Analyzing competitor: ${competitorDomain}`);
+
+    // Step 1: Get SEO intelligence (using placeholder data for now)
+    const competitorData = `Domain: ${competitorDomain}\nWeakness: Their content on 'AI investments in South Africa' is outdated and ranks poorly.`;
+    
+    // Step 2: Get live radio intelligence (from our simulated function)
+    const radioSignal = await getRadioSignal();
+
+    // Step 3: Synthesize intelligence and generate mandate with Gemini
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"});
+    const prompt = `You are The Sovereign, a market-dominating AI strategist. Synthesize the following intelligence reports and issue a single, precise "Strategic Mandate" for your content and distribution agents to execute immediately.\n\nSEO REPORT:\n${competitorData}\n\nLIVE RADIO INTEL (PRIORITY):\n${radioSignal}\n\nIssue the Mandate:`;
+    
+    const result = await model.generateContent(prompt);
+    const mandate = result.response.text();
+    
+    console.log("STRATEGIC MANDATE ISSUED:", mandate);
+    res.json({ mandate: mandate.trim() });
+
+  } catch (e) {
+    console.error("Market Weaver Error:", e.message);
+    res.status(500).json({ error: "Failed to generate mandate." });
+  }
 });
 
-app.post("/api/agents/datahunter/mpesa-callback", (req, res) => {
-    console.log('Received M-Pesa callback:', req.body);
-    res.status(200).send('Callback received.');
-});
 
-app.post("/api/agents/stability/generate", async (req, res) => {
-  try {
-    const prompt = req.body.headline || 'A beautiful African savanna at sunset, photorealistic';
-    const formData = new FormData();
-    formData.append('prompt', prompt); formData.append('output_format', 'png');
-    const response = await axios.post('https://api.stability.ai/v2beta/stable-image/generate/sd3', formData,
-      { headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${STABILITY_API_KEY}`, 'Accept': 'image/*' }, responseType: 'arraybuffer' });
-    res.setHeader('Content-Type', 'image/png'); res.send(response.data);
-  } catch (e) { console.error("Stability Agent Error:", e.response?.data?.toString() || e.message); res.status(500).json({ error: "Failed to generate image." }); }
-});
+// --- Your other existing agents (WhatsApp, Stability, Payments, etc.) should be pasted here ---
+// ... Make sure the rest of your server code follows here ...
 
-// === MVML (Minimal-Viable Money Loop) ROUTES GO HERE ===
-// Note: Paste the full MVML code from our previous messages here
 
 // --- Server Start --------------------------------------------------------
-app.get("/", (_, res) => res.send("Multi-Agent Server is up and running."));
-app.listen(PORT, () => console.log(`Listening on ${PORT}`));
+app.get("/", (_, res) => res.send("Digital Sovereign is online. Awaiting commands."));
+app.listen(PORT, () => console.log(`The Sovereign is listening on ${PORT}`));
